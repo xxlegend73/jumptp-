@@ -1,0 +1,178 @@
+-- Grapple Macro (Ground Slide to Center) - Toggleable
+local player = game.Players.LocalPlayer
+local runService = game:GetService("RunService")
+local UIS = game:GetService("UserInputService")
+local char = player.Character or player.CharacterAdded:Wait()
+local hrp = char:WaitForChild("HumanoidRootPart")
+
+-- CENTER OF MAP (adjust this to your map’s floor center)
+local mapCenter = Vector3.new(0, 0, 0) -- X/Z should be center, Y should match ground
+
+-- === CONFIG ===
+local AUTO_SNAP_LENGTH = 4        -- rope length for auto-snap + manual pull
+local AUTO_SNAP_DURATION = 0.4    -- seconds rope stays short after grappling
+local NORMAL_LENGTH = 400      -- rope length when not pulling
+
+-- GUI Setup
+local gui = Instance.new("ScreenGui")
+gui.Name = "GrappleMacroGUI"
+gui.ResetOnSpawn = false
+gui.Parent = player:WaitForChild("PlayerGui")
+
+-- === MACRO MAIN FRAME ===
+local frame = Instance.new("Frame")
+frame.Size = UDim2.new(0, 120, 0, 120)
+frame.Position = UDim2.new(0, 30, 0, 150)
+frame.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+frame.BackgroundTransparency = 0.1
+frame.Active = true
+frame.Draggable = true
+frame.Parent = gui
+
+local frameCorner = Instance.new("UICorner")
+frameCorner.CornerRadius = UDim.new(1, 0)
+frameCorner.Parent = frame
+
+local label = Instance.new("TextLabel")
+label.Size = UDim2.new(1, 0, 0, 20)
+label.Position = UDim2.new(0, 0, 0, 0)
+label.BackgroundTransparency = 1
+label.Text = "Flazed"
+label.TextColor3 = Color3.fromRGB(255, 255, 255)
+label.Font = Enum.Font.Gotham
+label.TextSize = 14
+label.Parent = frame
+
+-- Pull button
+local pulling = false
+local pullButton = Instance.new("TextButton")
+pullButton.Size = UDim2.new(0, 100, 0, 100)
+pullButton.Position = UDim2.new(0, 10, 0, 10)
+pullButton.Text = "Hold"
+pullButton.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+pullButton.TextColor3 = Color3.new(1, 1, 1)
+pullButton.Font = Enum.Font.Gotham
+pullButton.TextSize = 16
+pullButton.Parent = frame
+
+local buttonCorner = Instance.new("UICorner")
+buttonCorner.CornerRadius = UDim.new(1, 0)
+buttonCorner.Parent = pullButton
+
+pullButton.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
+		pulling = true
+		pullButton.Text = "..."
+	end
+end)
+
+pullButton.InputEnded:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
+		pulling = false
+		pullButton.Text = "Hold"
+	end
+end)
+
+-- Toggle Button
+local launchEnabled = false
+
+local toggleBtn = Instance.new("TextButton")
+toggleBtn.Size = UDim2.new(0, 60, 0, 30)
+toggleBtn.Position = UDim2.new(1, -70, 1, -150)
+toggleBtn.AnchorPoint = Vector2.new(1, 1)
+toggleBtn.BackgroundColor3 = Color3.fromRGB(80, 0, 0)
+toggleBtn.Text = "Launch: OFF"
+toggleBtn.TextColor3 = Color3.new(1, 1, 1)
+toggleBtn.Font = Enum.Font.GothamBold
+toggleBtn.TextSize = 12
+toggleBtn.Draggable = true
+toggleBtn.Active = true
+toggleBtn.Parent = gui
+
+local toggleCorner = Instance.new("UICorner")
+toggleCorner.CornerRadius = UDim.new(0.3, 0)
+toggleCorner.Parent = toggleBtn
+
+toggleBtn.MouseButton1Click:Connect(function()
+	launchEnabled = not launchEnabled
+	toggleBtn.Text = "Launch: " .. (launchEnabled and "ON" or "OFF")
+	toggleBtn.BackgroundColor3 = launchEnabled and Color3.fromRGB(0, 120, 0) or Color3.fromRGB(80, 0, 0)
+end)
+
+-- Rope Detection
+local function getRope()
+	local ropesFolder = workspace:FindFirstChild("Ropes")
+	if not ropesFolder then return nil end
+	local userRope = ropesFolder:FindFirstChild(player.Name)
+	if not userRope then return nil end
+	return userRope:FindFirstChild("mainConnectionRope")
+end
+
+-- Grapple Macro Logic
+local lastTarget = nil
+
+-- auto-snap state
+local autoSnapActive = false
+local autoSnapEnd = 0
+
+local function startAutoSnap()
+	autoSnapActive = true
+	autoSnapEnd = time() + AUTO_SNAP_DURATION
+end
+
+runService.RenderStepped:Connect(function()
+	local rope = getRope()
+
+	-- If rope missing or detached, clear state
+	if not rope or not rope.Attachment1 then
+		lastTarget = nil
+		autoSnapActive = false
+		return
+	end
+
+	-- detect new target
+	local targetPart = rope.Attachment1.Parent
+	local targetModel = targetPart and targetPart:FindFirstAncestorOfClass("Model")
+
+	if targetModel 
+		and targetModel:FindFirstChild("HumanoidRootPart") 
+		and targetModel ~= lastTarget 
+	then
+		lastTarget = targetModel
+		startAutoSnap() -- force short rope briefly
+
+		if launchEnabled then
+			local targetHRP = targetModel.HumanoidRootPart
+
+			-- 🚫 No flying: horizontal-only ground launch
+			local flatDirection = Vector3.new(
+				mapCenter.X - targetHRP.Position.X,
+				0,
+				mapCenter.Z - targetHRP.Position.Z
+			)
+
+			-- Guard against zero-length vector
+			if flatDirection.Magnitude > 0 then
+				flatDirection = flatDirection.Unit
+				local launchSpeed = 6000
+				targetHRP.AssemblyLinearVelocity = Vector3.new(
+					flatDirection.X * launchSpeed,
+					-40, -- keeps them on the ground
+					flatDirection.Z * launchSpeed
+				)
+			end
+		end
+	end
+
+	-- expire auto-snap
+	if autoSnapActive and time() >= autoSnapEnd then
+		autoSnapActive = false
+	end
+
+	-- apply rope length
+	if autoSnapActive or pulling then
+		rope.Length = AUTO_SNAP_LENGTH
+	else
+		rope.Length = NORMAL_LENGTH
+	end
+end)
